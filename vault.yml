@@ -1,0 +1,7 @@
+vault:
+  access_key: xxx
+  secret_key: yyy
+
+gpg:
+  algorithm: AES256
+  key: zzz
