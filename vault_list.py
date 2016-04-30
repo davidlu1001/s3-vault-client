@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
+from __future__ import division
 import os
 import sys
 import subprocess
@@ -13,6 +14,7 @@ import hmac
 import base64
 import requests
 import re
+import doctest
 from pprint import pprint
 from lxml import etree
 
@@ -22,6 +24,7 @@ except ImportError:
     # xml.etree.ElementTree was only added in python 2.5
     import elementtree.ElementTree as ET
 
+
 """
 Please make sure the config file 'vault.yml'
 does exist in the following places:
@@ -29,12 +32,22 @@ does exist in the following places:
 ~/.vault.yml
 OR
 /etc/vault.yml
+OR
+os.environ["ACCESS_KEY"], os.environ["SECRET_KEY"]
+os.environ["algorithm"], os.environ["proxy"]
+
 """
 
 GLOBAL_KEY_FILE = '/etc/vault.yml'
 USER_KEY_FILE = os.path.join(os.environ['HOME'], '.vault.yml')
-BASE_URL = 'https://example.com/'
+BASE_URL = 'https://vault.revera.co.nz/'
 LOG_FILE = '/var/log/vault.log'
+
+# Requests module not used since urllib3 not support https proxy
+#proxy_dict = {
+#    'http': 'http://1.1.1.1',
+#    'https': 'http://1.1.1.1:443',
+#}
 
 
 def get_configuration():
@@ -45,20 +58,33 @@ def get_configuration():
     """
 
     try_files = [USER_KEY_FILE, GLOBAL_KEY_FILE]
+    flag_config_exist = 0
 
     for config_file in try_files:
         try:
-            config = yaml.load(open(config_file, 'rt').read())
+            if os.path.isfile(config_file):
+                config = yaml.load(open(config_file, 'rt').read())
+                flag_config_exist = 1
+            continue
         except yaml.YAMLError as e:
             logging.debug('Config file {} not found/accessible: {}'
                           .format(config_file, str(e)))
         if config:
             break
-    if not config:
+
+    if not flag_config_exist:
         logging.error('Could not access a suitable config file.')
+        try:
+            logging.info('Use setting in os environ: ACCESS: {} SECRET: {}'
+                         .format(os.environ["ACCESS_KEY"], os.environ["SECRET_KEY"]))
+            return os.environ["ACCESS_KEY"], os.environ["SECRET_KEY"]
+        except:
+            print("can't find access_keys in anywhere!")
+
         sys.exit(1)
 
     return config
+
 
 
 def get_path(catalog, filename):
@@ -392,19 +418,29 @@ def list_bucket_info(bucket, config):
         root_xml = etree.tostring(root,
                                 encoding="UTF-8",
                                 xml_declaration=True)
+#        print("root: {}, root_xml: {}".format(root, root_xml))
         current_list = get_contents(root_xml)
         current_prefixes = get_common_prefixes(root_xml)
         truncated = list_truncated(root_xml)
+#        size = get_size(root_xml)
         logging.info("current list: {} current_prefix: {} truncated: {}".format(current_list, current_prefixes, truncated))
 
         if current_list:
             #key_output_dict_list = []
             for item in current_list:
-                current_key =  item["Key"]
+                current_key = item["Key"]
                 current_key_mdate = item["LastModified"].replace('T', ' ').replace('.000Z', '')
                 #logging.info('key: {} mdate: {}'.format(current_key, current_key_mdate))
                 #key_output_dict_list.append({current_key:current_key_mdate})
-                print('{}{}{}'.format(current_key_mdate, '\t', current_key))
+                current_size_bytes = item["Size"]
+                current_size_MB = humanize_bytes_MB_1K(int(item["Size"]))
+#                print('{}{}{}{}{}'
+#                      .format(current_key_mdate, '\t',
+#                              current_size, '\t\t',
+#                              current_key))
+                print(u"{:>16} {:>9s} {:>9s} {:>2s}"
+                      .format(current_key_mdate, current_size_bytes,
+                              current_size_MB, current_key))
             #pprint(key_output_dict_list)
         #current_keys = get_keys(current_list)
         #current_keys = current_list[-1]["Key"]
@@ -423,6 +459,41 @@ def get_common_prefixes(root_xml):
 
 def get_keys(root_xml):
     return getListFromXml(root_xml, "Key")
+
+
+def humanize_bytes_MB_1K(bytes, precision=2, suffix='MB'):
+    if bytes == 1:
+        return '1 byte'
+    factor = 1000*1000
+    return '%.*f %s' % (precision, bytes / factor, suffix)
+
+def humanize_bytes_MB_1024(bytes, precision=2, suffix='MB'):
+    if bytes == 1:
+        return '1 byte'
+    factor = 1<<20
+    return '%.*f %s' % (precision, bytes / factor, suffix)
+
+
+def humanize_bytes(bytes, precision=1):
+    """Return a humanized string representation of a number of bytes.
+
+    Assumes `from __future__ import division`.
+
+    """
+    abbrevs = (
+        (1<<50, 'PB'),
+        (1<<40, 'TB'),
+        (1<<30, 'GB'),
+        (1<<20, 'MB'),
+        (1<<10, 'kB'),
+        (1, 'bytes')
+    )
+    if bytes == 1:
+        return '1 byte'
+    for factor, suffix in abbrevs:
+        if bytes >= factor:
+            break
+    return '%.*f %s' % (precision, bytes / factor, suffix)
 
 
 def main():
